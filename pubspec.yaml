@@ -1,0 +1,33 @@
+name: santainessunmi
+description: Um aplicativo Flutter para impressão de tickets no supermercado Santa Inês.
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.3 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.2
+  sunmi_printer_plus: ^2.1.3
+  flutter_esc_pos_utils: ^1.0.1
+  intl: ^0.19.0
+  image: ^4.2.0
+  mysql1: ^0.20.0
+  mockito: ^5.4.4
+  flutter_dotenv: ^5.1.0
+  sqflite: ^2.3.3+1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo_santa_ines.png
+
