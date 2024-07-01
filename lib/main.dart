@@ -1,20 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:santainessunmi/services/database_service.dart';
 import 'package:sunmi_printer_plus/enums.dart';
 import 'package:sunmi_printer_plus/sunmi_printer_plus.dart';
-import 'dart:math';
 import 'package:intl/intl.dart';
-import 'dart:io';
+import 'package:timezone/data/latest.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
+import 'package:web_socket_channel/io.dart';
 
 final formatadorData = DateFormat('dd/MM/yyyy');
 final formatadorHora = DateFormat('HH:mm:ss');
-final random = Random();
-final numerosAleatorios = List.generate(3, (_) => random.nextInt(100) + 1);
-
-
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,13 +20,8 @@ void main() async {
     DeviceOrientation.landscapeRight,
     DeviceOrientation.landscapeLeft,
   ]);
-
-  try {
-    await DatabaseService.connect();
-    print ('Conectado ao banco de dados!');
-  }catch (e){
-    print(('Erro ao conectar ao banco de dados $e'));
-  }
+  tz.initializeTimeZones();
+  tz.setLocalLocation(tz.getLocation('America/Sao_Paulo'));
 
   runApp(const MyApp());
 }
@@ -77,80 +69,59 @@ class Home extends StatefulWidget {
   @override
   _HomeState createState() => _HomeState();
 }
-int _numeroSenha = 0;
 
 class _HomeState extends State<Home> {
-
-  int ultimaSenha = 0;
-  bool printBinded = false;
-  int paperSize = 0;
-  String serialNumber = "";
-  String printerVersion = "";
-  Future<List<Map<String, dynamic>>>? _ultimasSenhas;
-
+  late final IOWebSocketChannel _channel;
+  int _numeroSenha = 0;
+  bool _isConnected = false;
 
   @override
   void initState() {
     super.initState();
-    _bindingPrinter().then((bool? isBind) async {
-      if (isBind != null && isBind) {
-        final size = await SunmiPrinter.paperSize();
-        final version = await SunmiPrinter.printerVersion();
-        final serial = await SunmiPrinter.serialNumber();
+    _connectToWebSocket();
+  }
 
-        if (await DatabaseService.isConnected()) {
-          print('Conectado ao banco de dados com sucesso!');
-          setState(() {
-            printBinded = isBind;
-            paperSize = size;
-            printerVersion = version;
-            serialNumber = serial;
-            _buscarUltimasSenhas();
-          });
+  void _connectToWebSocket() {
+    _channel = IOWebSocketChannel.connect(
+      Uri.parse('ws://192.168.1.121:8080'),
+    );
+
+    _channel.stream.listen((message) {
+      final data = jsonDecode(message);
+      if (data['tipo'] == 'ultima_senha') {
+        setState(() {
+          _numeroSenha = data['senha'];
+        });
+      } else if (data['tipo'] == 'nova_senha') {
+        setState(() {
+          _numeroSenha = data['senha'];
+          _isConnected = true;
+        });
+        if (_isConnected) {
+          _imprimirSenha();
         } else {
-          print("Erro ao conectar ao banco de dados.");
-
-          // Exibir AlertDialog de erro (agora dentro do builder)
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: Text('Erro de Conexão'),
-              content: Text('Não foi possível conectar ao banco de dados.'),
-              actions: [
-                TextButton(
-                  child: Text('OK'),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            ),
-          );
+          print("Erro: Não foi possível conectar ao servidor WebSocket.");
         }
+      } else if (data['tipo'] == 'erro') {
+        print("Erro do servidor: ${data['mensagem']}");
       }
-    });
-  }
-  Future<bool?> _bindingPrinter() async {
-    final bool? result = await SunmiPrinter.bindingPrinter();
-    return result;
-  }
-
-  void _gerarEInserirSenha() async {
-    final novaSenha = await _obterProximaSenha();
-    await DatabaseService.inserirSenha(novaSenha);
-    setState(() {
-      _numeroSenha = novaSenha;
-      _buscarUltimasSenhas();
+    }, onDone: () {
+      print('Conexão WebSocket fechada');
+    }, onError: (error) {
+      print('Erro WebSocket: $error');
     });
   }
 
-  Future<int> _obterProximaSenha() async {
-    final ultimaSenha = await DatabaseService.obterUltimaSenha();
-    return ultimaSenha + 1;
+  void _buscarUltimaSenha() {
+    _channel.sink.add('buscar_ultima_senha');
   }
 
-  Future<void> _buscarUltimasSenhas() async {
-    setState(() {
-      _ultimasSenhas = DatabaseService.buscarUltimasSenhas();
-    });
+  void _verUltimaSenha() {
+    _channel.sink.add('ver_ultima_senha');
+  }
+
+  void _gerarEInserirSenha() {
+    _channel.sink.add('criar_e_imprimir_senha');
   }
 
   @override
@@ -163,40 +134,16 @@ class _HomeState extends State<Home> {
               color: const Color(0xFFF58634),
             ),
           ),
-          Center( //
+          Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                FutureBuilder<Uint8List>(
-                  future: readFileBytes('assets/images/logo_santa_ines.png'),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasData) {
-                      return Container(
-                        decoration: BoxDecoration(
-                          border: Border.all(
-                            color: Colors.white, //
-                            width: 2.0, //
-                          ),
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                        child: Image.memory(
-                          snapshot.data!,
-                          width: 400,
-                          height: 400,
-                        ),
-                      );
-                    } else if (snapshot.hasError) {
-                      return Text('Erro ao carregar imagem');
-                    }
-                    return const CircularProgressIndicator();
+                ElevatedButton(
+                  onPressed: () {
+                    _gerarEInserirSenha();
+                    _imprimirSenha();
                   },
-                ),
-
-                SizedBox(
-                    height: 100,
-                    width: 600),
-                _buildButton(
-                  "RETIRE SUA SENHA APERTANDO ESTE BOTÃO.",
+                  child: Text("RETIRE SUA SENHA APERTANDO ESTE BOTÃO."),
                 ),
               ],
             ),
@@ -206,67 +153,60 @@ class _HomeState extends State<Home> {
     );
   }
 
-
-  Widget _buildButton(String text) {
-    return ElevatedButton(
-      onPressed: () async {
-        _gerarEInserirSenha();
-        final agora = DateTime.now();
-        _HomeState()._buscarUltimasSenhas();
-        await SunmiPrinter.initPrinter();
-        await SunmiPrinter.startTransactionPrint(true);
-        //await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        //await SunmiPrinter.line();
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.bold();
-        await SunmiPrinter.setFontSize(SunmiFontSize.XL);
-        await SunmiPrinter.printText('SUPERMERCADO SANTA INÊS');
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.setFontSize(SunmiFontSize.XL);
-        await SunmiPrinter.printText('ATENDIMENTO AÇOUGUE');
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.line();
-        await SunmiPrinter.setFontSize(SunmiFontSize.XL);
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.bold();
-        await SunmiPrinter.printText('SENHA: $_numeroSenha');
-        await SunmiPrinter.setFontSize(SunmiFontSize.XL);
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.line();
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.setFontSize(SunmiFontSize.XL);
-        await SunmiPrinter.printText("FIQUE A VONTADE PARA FAZER");
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.setFontSize(SunmiFontSize.XL);
-        await SunmiPrinter.printText("SUAS COMPRAS.");
-        await SunmiPrinter.setFontSize(SunmiFontSize.XL);
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.setFontSize(SunmiFontSize.XL);
-        await SunmiPrinter.printText("APONTE A CÂMERA NO QR CODE E ACOMPANHE A FILA PELO CELULAR.");
-        await SunmiPrinter.resetBold();
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
-        await SunmiPrinter.lineWrap(5);
-        await SunmiPrinter.printQRCode(
-          'http://www.supermercadosantaines.com.br/',
-          size: 6,
-        );
-        await SunmiPrinter.lineWrap(5);
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.LEFT);
-        await SunmiPrinter.printText('Data: ${formatadorData.format(agora)}');
-        await SunmiPrinter.setAlignment(SunmiPrintAlign.RIGHT);
-        await SunmiPrinter.printText('Hora: ${formatadorHora.format(agora)}');
-        await SunmiPrinter.lineWrap(2);
-        await SunmiPrinter.exitTransactionPrint(true);
-        await SunmiPrinter.cut();
-      },
-      child: Text(text),
+  void _imprimirSenha() async {
+    final agora = DateTime.now();
+    await SunmiPrinter.initPrinter();
+    await SunmiPrinter.startTransactionPrint(true);
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.setFontSize(SunmiFontSize.XL);
+    await SunmiPrinter.printText('SUPERMERCADO SANTA INÊS');
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.setFontSize(SunmiFontSize.XL);
+    await SunmiPrinter.printText('ATENDIMENTO AÇOUGUE');
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.line();
+    await SunmiPrinter.setFontSize(SunmiFontSize.XL);
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.printText('SENHA: $_numeroSenha');
+    await SunmiPrinter.setFontSize(SunmiFontSize.XL);
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.line();
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.setFontSize(SunmiFontSize.XL);
+    await SunmiPrinter.printText("FIQUE A VONTADE PARA FAZER");
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.setFontSize(SunmiFontSize.XL);
+    await SunmiPrinter.printText("SUAS COMPRAS.");
+    await SunmiPrinter.setFontSize(SunmiFontSize.XL);
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.setFontSize(SunmiFontSize.XL);
+    await SunmiPrinter.printText("APONTE A CÂMERA NO QR CODE E ACOMPANHE A FILA PELO CELULAR.");
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.CENTER);
+    await SunmiPrinter.resetBold();
+    await SunmiPrinter.lineWrap(5);
+    await SunmiPrinter.printQRCode(
+      'http://www.supermercadosantaines.com.br/',
+      size: 6,
     );
+    await SunmiPrinter.lineWrap(5);
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.LEFT);
+    await SunmiPrinter.printText('Data: ${formatadorData.format(agora)}');
+    await SunmiPrinter.setAlignment(SunmiPrintAlign.RIGHT);
+    await SunmiPrinter.printText('Hora: ${formatadorHora.format(agora)}');
+    await SunmiPrinter.lineWrap(2);
+    await SunmiPrinter.exitTransactionPrint(true);
+    await SunmiPrinter.cut();
   }
-
+  @override
+  void dispose() {
+    _channel.sink.close();
+    super.dispose();
+  }
+}
 
   Future<Uint8List> readFileBytes(String path) async {
     ByteData fileData = await rootBundle.load(path);
     return fileData.buffer.asUint8List(fileData.offsetInBytes, fileData.lengthInBytes);
   }
 
-}
+

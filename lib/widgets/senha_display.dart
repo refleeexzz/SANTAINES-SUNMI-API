@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:santainessunmi/services/database_service.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 class SenhasDisplay extends StatefulWidget {
   @override

@@ -2,6 +2,7 @@ import 'package:mysql1/mysql1.dart';
 export 'database_service.dart';
 import 'package:intl/intl.dart';
 import 'dart:math';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 
 String gerarCodigoAleatorio(int tamanho) {
@@ -32,11 +33,11 @@ class DatabaseService {
 
   static Future<void> connect() async {
     _conn = ConnectionSettings(
-      host: 'IP',
+      host: '192.168.1.250',
       port: 3306,
-      user: 'user',
-      password: 'password',
-      db: 'db',
+      user: 'rodrigo',
+      password: 'Q1w2aqsw',
+      db: 'santainestv',
     );
 
     try {
